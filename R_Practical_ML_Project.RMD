@@ -1,0 +1,295 @@
+---
+title: "R_Practical_ML_Project"
+author: "Sathya Shanmugavelu"
+date: "August 11, 2016"
+output: html_document
+---
+
+### Final Project Report - Practical Machine Learning Course
+###--------------------------------------------------------------
+This is part of the Final Project Report from the Module - "Practical Machine Learning Course" from Coursera's  MOOC - "Data Science Specialization - Johns Hopkins University"" 
+This is submitted by : Sathya Shanmugavelu
+
+
+### Background Introduction - Finding Patterns from Data on Personal Physical Activity
+###--------------------------------------------------------------------------------------
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. 
+
+These type of devices are part of the quantified self movement a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. 
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. 
+
+They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+###Data Sources - Training and Test Data Set for the Personal Physical Activity
+###-----------------------------------------------------------------------------
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project comes from this original source: http://groupware.les.inf.puc-rio.br/har. 
+
+
+### Project Intended Results - To Predict the Manner on Excerise ("classe" variable)
+###----------------------------------------------------------------------------------
+The goal of your project is to predict the manner in which they did the exercise. 
+This is the "classe" variable in the training set. 
+
+(You may use any of the other variables to predict with. 
+You should create a report describing :
+ - How you built your model, 
+ - How you used cross validation, 
+ - what you think the expected out of sample error is, and 
+ - why you made the choices you did. 
+ You will also use your prediction model to predict 20 different test cases.)
+
+### Machine Learning Algorithms Used :
+###------------------------------------
+(1) Predicting with Decision Trees
+(2) Predicting with Random Forest
+
+
+### Usage of the R Library for performing the above Machine Learning Algorithms:
+###--------------------------------------------------------------------------------
+```{r}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(knitr)
+```
+
+###Getting and loading the data (Load the Data from the URL):
+###--------------------------------------------------------------
+Note - Since the Original Training Data Set in CSV file has some "Empty Strings"
+and some having "#DIV/0!" , the below argument forces all these values to "NA"
+Argument to the read.csv file : na.strings=c("NA","#DIV/0!","")
+
+```{r}
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+my_train <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+my_test <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+```
+
+
+### Partioning Training set into two - Using Rule of Thumb for "Prediction study design"
+###-------------------------------------------------------------------------------------
+# Rules of thumb for prediction study design
+#------------------------------------------------------------
+Because we want to be able to estimate the out-of-sample error, 
+We randomly split the full training data (my_train) into a smaller training set
+(training) and a validation set (validation):
+
+```{r}
+set.seed(10)
+inTrain <- createDataPartition(y=my_train$classe, p=0.7, list=F)
+training <- my_train[inTrain, ]
+validation <- my_train[-inTrain, ]
+```
+
+
+### Cleaning data - Removing NearZeroVariance - From the Covariates of Training Data Set
+###-------------------------------------------------------------------------------------
+Removing zero covariates (Some variables have no variability in them)
+If we create a Feature called "Email for Labels" , this variable will always be TRUE
+So this covariate might not be very useful.  
+The "nearZeroVar" identifies those variables (that have "very little variability" and hence might not likely be a good predictors) and tries to remove them from the Training 
+Data Set.  
+
+```{r}
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+validation <- validation[, -nzv]
+```
+
+Also we will remove variables that are almost always NA, 
+```{r}
+mostlyNA <- sapply(training, function(x) mean(is.na(x))) > 0.95
+training <- training[, mostlyNA==F]
+validation <- validation[, mostlyNA==F]
+```
+
+We will also remove variables that don't make intuitive sense for prediction. 
+Note that we decide which ones to remove by analyzing training, 
+and perform the identical removals on validation:
+
+Remove variables that don't make intuitive sense for prediction 
+(X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp), 
+which happen to be the first five variables
+```{r}
+training <- training[, -(1:5)]
+validation <- validation[, -(1:5)]
+```
+
+### Model Building
+###-------------------------------------------------------------------------------------
+### (1) Decision Tree
+###-------------------------------------------------------------------------------------
+Instruct train to use the training data set using "rpart"
+```{r}
+modFit <- train(classe ~ .,method="rpart",data=training)
+fancyRpartPlot(modFit$finalModel)
+```
+Print the final model and confusion matrix
+```{r}
+print(modFit$finalModel)
+```
+
+Now, we will use the fitted model to predict the label ("classe") in 
+validation, and show the "confusion matrix" to compare the
+predicted versus the actual labels:
+
+Use model to predict classe in validation set (validation)
+```{r}
+preds <- predict(modFit, newdata=validation)
+```
+
+Show confusion matrix to get estimate of out-of-sample error
+```{r}
+confusionMatrix(validation$classe, preds)
+```
+
+# Result for Decision Tree -  
+#-------------------------------
+# The accuracy is just 57%, thus our predicted accuracy for out-of-sample error is 43%.
+# Thus Decision tree is not having a high prediction accuracy
+# Let us try with Random Forest
+
+
+###-------------------------------------------------------------------------------------
+### (2) Random Forest
+###-------------------------------------------------------------------------------------
+We will start off with a Random Forest model, to see if it would have 
+acceptable performance. 
+We will fit the model on training, and instruct the "train" function to use 
+3-fold cross-validation to select optimal tuning parameters for the model.
+
+Instruct "Train" to use 3-fold CV to select optimal tuning parameters
+```{r}
+fitControl <- trainControl(method="cv", number=3, verboseIter=F)
+```
+# Fit model on training
+```{r}
+fit <- train(classe ~ ., data=training, method="rf", trControl=fitControl)
+```
+# Print final model to see tuning parameters it chose
+```{r}
+fit$finalModel
+```
+# We see here that it decided to use "500 trees and try 27 variables at each split".
+
+Now, we will use the fitted model to predict the label ("classe") in 
+validation, and show the "confusion matrix" to compare the
+predicted versus the actual labels:
+
+Use model to predict classe in validation set (validation)
+```{r}
+preds <- predict(fit, newdata=validation)
+```
+
+# show confusion matrix to get estimate of out-of-sample error
+```{r}
+confusionMatrix(validation$classe, preds)
+```
+
+# Result for Random Forest -  
+#-------------------------------
+# The accuracy is 99.8%, thus our predicted accuracy for out-of-sample error is 0.2%.
+# This is an excellent result, so rather than trying additional algorithms, 
+# We will use Random Forests to predict on the test set.
+
+
+###-------------------------------------------------------------------------------------
+### Model Evaluation and Selection
+###-------------------------------------------------------------------------------------
+# Since we had Random Forest as the most accurate ones , we will use it for our model;
+
+###-------------------------------------------------------------------------------------
+### Re-training the Selected Model
+###-------------------------------------------------------------------------------------
+Before predicting on the "Testing" set (my_test), 
+it is important to train the model on the full training set (my_train), 
+rather than using a model trained on a reduced training set (training), 
+in order to produce the most accurate predictions. 
+
+Therefore, we now repeat everything we did above on "my_train" and "my_test":
+remove variables with nearly zero variance
+
+```{r}
+nzv <- nearZeroVar(my_train)
+my_train <- my_train[, -nzv]
+my_test <- my_test[, -nzv]
+```
+
+Remove variables that are almost always NA both from full training and test set
+```{r}
+mostlyNA <- sapply(my_train, function(x) mean(is.na(x))) > 0.95
+my_train <- my_train[, mostlyNA==F]
+my_test <- my_test[, mostlyNA==F]
+```
+
+Remove variables that don't make intuitive sense for prediction 
+(X, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp), 
+which happen to be the first five variables (Both from full training and test set)
+```{r}
+my_train <- my_train[, -(1:5)]
+my_test <- my_test[, -(1:5)]
+```
+
+Re-fit model using full training set (my_train)
+```{r}
+fitControl <- trainControl(method="cv", number=3, verboseIter=F)
+fit <- train(classe ~ ., data=my_train, method="rf", trControl=fitControl)
+```
+
+Print final model to see tuning parameters it chose
+```{r}
+fit$finalModel
+```
+
+# We see here that it decided to use "500 trees and try 27 variables at each split".
+
+
+###-------------------------------------------------------------------------------------
+### Make the Test Set (my_test) Predictions
+###-------------------------------------------------------------------------------------
+Now, we use the model fit on "my_train" to predict the label for the observations 
+in my_test, and write those predictions to individual files:
+
+Tredict on test set
+```{r}
+preds <- predict(fit, newdata=my_test)
+```
+
+Convert Predictions to character vector
+```{r}
+preds <- as.character(preds)
+```
+
+#Create function to write predictions to files
+```{r}
+pml_write_files <- function(x) {
+  n <- length(x)
+  for(i in 1:n) {
+    filename <- paste0("problem_id_", i, ".txt")
+    write.table(x[i], file=filename, quote=F, row.names=F, col.names=F)
+  }
+}
+```
+
+# Create prediction files to submit
+```{r}
+pml_write_files(preds)
+```
+
+
+
+
